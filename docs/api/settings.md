@@ -143,10 +143,16 @@ def my_kernel(x: torch.Tensor) -> torch.Tensor:
 
 .. autoattribute:: Settings.autotune_log
 
-   When set, Helion writes per-config autotuning telemetry (run id, kernel id, sample id, config index, generation, status, perf, compile time, timestamp, decorator, config JSON) to ``<value>.csv`` and mirrors the autotune log output to ``<value>.log`` for population-based autotuners (currently ``PatternSearch`` and ``DifferentialEvolution``).
-   The kernel identity (run id, kernel id, name, source, input shapes, dtypes, hardware) is appended, one JSON record per run, to the ``<value>.meta.jsonl`` sidecar. All three files are opened in append mode, so multiple autotune runs that share one base path (e.g. many kernels and input shapes benchmarked in a single process) accumulate instead of overwriting each other.
-   Three content-derived ids tie the data together. ``kernel_id`` (a hash of the kernel source and code-generation settings) is shape/dtype independent, grouping every row for one kernel across shapes and runs. ``run_id`` (a hash of ``kernel_id`` plus input shapes, dtypes, and hardware) identifies a single autotune invocation, so each CSV row joins to exactly one ``.meta.jsonl`` record and a config's measured perf can be attributed to the specific shape/dtype/hardware it was measured on. ``sample_id`` (a hash of the kernel source and the config) identifies each ``(kernel, config)`` pair. Together ``(run_id, sample_id)`` is the natural primary key for the per-config rows: ``run_id`` pins the kernel+shape+dtype+hardware instance and ``sample_id`` pins the config.
-   Controlled by ``HELION_AUTOTUNE_LOG``.
+   When set, Helion writes per-config telemetry (run id, timestamp, config id, generation, status, perf, compile time, config) to ``<value>.csv`` and mirrors the autotune log to ``<value>.log`` (for population-based autotuners: ``PatternSearch``, ``DifferentialEvolution``). Both append, so runs sharing one base path accumulate.
+   CSV rows join to ``.meta.jsonl`` via two hashes: ``run_id`` for the invocation — hash(kernel source, shapes, dtypes, hardware, codegen settings) — and ``config_id`` for the config. The codegen settings hashed into ``run_id`` are: backend, dot_precision, fast_math, static_shapes, index_dtype, allow_warp_specialize, triton_do_not_specialize, pallas_interpret, debug_dtype_asserts, persistent_reserved_sms (the full settings are recorded in ``.meta.jsonl``). Same config_id across started/ok/error and re-benchmarks. The full config is written inline in the trailing ``config`` column of the CSV; it is also stored in the ``.meta.jsonl`` configs map, which is written only when ``autotune_log_details`` is enabled (see below). Controlled by HELION_AUTOTUNE_LOG.
+
+
+
+.. autoattribute:: Settings.autotune_log_details
+
+   Opt-in to the cost-model dataset sidecar. When enabled (``HELION_AUTOTUNE_LOG_DETAILS=1``) and ``autotune_log`` is set, Helion appends one JSON record per run to ``<autotune_log>.meta.jsonl``: the kernel identity (``run_id``, name, source, shapes, dtypes, hardware), the full ``helion.settings`` (JSON-safe via ``json.dumps(default=str)``, so ``torch.dtype``/callables become strings), and a ``configs`` map from ``config_id`` to the config tested.
+   Recover a measured ``(config, perf)`` sample by joining a CSV row to its record: ``meta[run_id]["configs"][row["config_id"]]``. ``run_id`` may recur (re-runs, processes, ``autotune_best_of_k``), but the ``configs`` maps are union-safe (same ``config_id`` implies the same config), so de-duplicating on ``run_id`` is lossless. Searches restricted to user-pinned ``configs`` (without ``force_autotune``) are excluded as a biased slice (``.csv``/``.log`` still written); setting this without ``autotune_log`` collects nothing and warns once.
+   Controlled by ``HELION_AUTOTUNE_LOG_DETAILS``.
 
 .. autoattribute:: Settings.autotune_compile_timeout
 
@@ -303,12 +309,6 @@ See :class:`helion.autotuner.LocalAutotuneCache` for details on cache keys and b
 ```
 
 Built-in values for ``HELION_AUTOTUNER`` include ``"LFBOTreeSearch"`` (default), ``"LFBOPatternSearch"``, ``"DESurrogateHybrid"``, ``"PatternSearch"``, ``"DifferentialEvolutionSearch"``, ``"FiniteSearch"``, and ``"RandomSearch"``.
-
-## Functions
-
-```{eval-rst}
-
-```
 
 ## Environment Variable Reference
 
